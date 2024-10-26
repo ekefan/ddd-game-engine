@@ -3,22 +3,19 @@ package memory
 import (
 	"testing"
 
+	"github.com/ekefan/ddd-game-engine/internal/core/domain"
 	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
 	session_repo "github.com/ekefan/ddd-game-engine/internal/ports/repository"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newSession(t *testing.T) session.Session {
-	ns, err := session.NewSession(
-		session.WithPlayer1(&websocket.Conn{}, "testPlayer1"),
-		session.WithPlayer2(&websocket.Conn{}, "testPlayer2"),
-	)
-	require.NoError(t, err)
+	ns := session.NewSession(&domain.Player{}, &domain.Player{})
+
 	require.NotEmpty(t, ns)
-	return ns
+	return *ns
 }
 
 func TestGet(t *testing.T) {

@@ -1,9 +1,6 @@
 package ports
 
-import "context"
-
-type GameServer interface {
-	StartSession(ctx context.Context) error
-	AddPlayer(ctx context.Context) error
-	MakeMove(ctx context.Context) error
+type GameService interface {
+	WaitInLobby() error //start route post
+	PlayGame() error    //play route web socket
 }
