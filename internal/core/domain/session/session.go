@@ -3,8 +3,9 @@ package session
 import (
 	"errors"
 
-	rps "github.com/ekefan/ddd-game-engine/internal/core/rps"
+	"github.com/ekefan/ddd-game-engine/internal/core/domain"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 var (
@@ -13,6 +14,7 @@ var (
 	ErrInvalidRoundOutcome = errors.New("invalid round outcome")
 	ErrInvalidFlag         = errors.New("flag can either be 0 for Player1Flag and 1 for Player2Flag")
 	ErrNoSession           = errors.New("no game session has been created")
+	ErrPlayerMissing = errors.New("a session can start only with two players")
 )
 
 const (
@@ -30,30 +32,60 @@ const (
 //
 // An instance is created with it's factory NewSession()
 type Session struct {
-	match   *rps.Match
-	player1 *rps.Player
-	player2 *rps.Player
+	match   *domain.Match
+	player1 *domain.Player
+	player2 *domain.Player
 }
 
-// [ ]: create a configuration pattern for the session factory
-func NewSession() (Session, error) {
-	match := &rps.Match{
+type sessionConfiguration func (s *Session) error
+func NewSession(cfgs ...sessionConfiguration) (Session, error) {
+	match := &domain.Match{
 		ID:    uuid.New(),
 		Round: InitRound,
 	}
-
-	player1 := &rps.Player{
-		ID: uuid.New(),
-	}
-	player2 := &rps.Player{
-		ID: uuid.New(),
-	}
-
-	return Session{
+	newSession := Session{
 		match:   match,
-		player1: player1,
-		player2: player2,
-	}, nil
+	}
+	for _, cfg := range cfgs {
+		cfg(&newSession)
+	}
+	if newSession.player1 == nil || newSession.player2 == nil{
+		return Session{}, ErrPlayerMissing
+	}
+	return newSession, nil
+}
+
+
+func WithPlayer1(playerConn *websocket.Conn, name string) sessionConfiguration {
+	var playerName string
+	if name == "" {
+		playerName = DefaultPlayer1Name
+	}
+	player := domain.Player{
+		ID: uuid.New(),
+		Name: playerName,
+		Connection: playerConn,
+	}
+	return func(s *Session) error {
+		s.player1 = &player
+		return nil
+	}
+}
+
+func WithPlayer2(playerConn *websocket.Conn, name string) sessionConfiguration {
+	var playerName string
+	if name == "" {
+		playerName = DefaultPlayer2Name
+	}
+	player := domain.Player{
+		ID: uuid.New(),
+		Name: playerName,
+		Connection: playerConn,
+	}
+	return func(s *Session) error {
+		s.player2 = &player
+		return nil
+	}
 }
 
 // GetID retuns the current session id which is the current match id
@@ -75,27 +107,27 @@ func (s *Session) UpdateRound() {
 
 // DetermineRoundOutcome checks the players move returns RoundOutcome
 // on error RoundOutcome as -1, and associated error is return
-func (s *Session) DetermineRoundOutCome() (rps.RoundOutcome, error) {
+func (s *Session) DetermineRoundOutCome() (domain.RoundOutcome, error) {
 	if s.match == nil {
 		return -1, ErrNoSession
 	}
-	var roundOutcome rps.RoundOutcome
+	var roundOutcome domain.RoundOutcome
 	player1move, player2move := s.GetPlayersMoves()
 
-	winMoveMapping := map[rps.Move]rps.Move{
-		rps.Rock:    rps.Scissor,
-		rps.Paper:   rps.Rock,
-		rps.Scissor: rps.Paper,
+	winMoveMapping := map[domain.Move]domain.Move{
+		domain.Rock:    domain.Scissor,
+		domain.Paper:   domain.Rock,
+		domain.Scissor: domain.Paper,
 	}
 	if winMoveMapping[player1move] == player2move {
-		roundOutcome = rps.Player1Win
+		roundOutcome = domain.Player1Win
 	} else {
-		roundOutcome = rps.Player2Win
+		roundOutcome = domain.Player2Win
 	}
 	return roundOutcome, nil
 }
 
-func (s *Session) SetRoundOutcome(roundOutcome rps.RoundOutcome) error {
+func (s *Session) SetRoundOutcome(roundOutcome domain.RoundOutcome) error {
 	if !roundOutcome.IsValid() {
 		return ErrInvalidRoundOutcome
 	}
@@ -107,8 +139,9 @@ func (s *Session) SessionAtMaxRound() bool {
 	return s.GetRound() >= MaxRound
 }
 
-func (s *Session) GetRoundOutCome() rps.RoundOutcome {
-	return s.match.RoundOutcome
+
+func (s *Session) GetRoundOutCome() domain.RoundOutcome {
+	return s.match.RoundOutcome 
 }
 
 // SetPlayerName sets players names for a game session
@@ -144,7 +177,7 @@ func (s *Session) GetPlayerName(flag int) (string, error) {
 
 	return "", ErrInvalidFlag
 }
-func (s *Session) SetPlayerMove(flag int, move rps.Move) error {
+func (s *Session) SetPlayerMove(flag int, move domain.Move) error {
 	switch flag {
 	case Player1Flag:
 		if !move.IsValid() {
@@ -163,7 +196,7 @@ func (s *Session) SetPlayerMove(flag int, move rps.Move) error {
 }
 
 // GEtMoves returns player1, and player2 moves
-func (s *Session) GetPlayersMoves() (player1Move, player2Move rps.Move) {
+func (s *Session) GetPlayersMoves() (player1Move, player2Move domain.Move) {
 	return s.player1.Move, s.player2.Move
 }
 
@@ -182,4 +215,10 @@ func (s *Session) IncreasePlayerPoint(flag int) error {
 
 func (s *Session) GetPlayersPoints() (player1Point, player2Point int16) {
 	return s.player1.Points, s.player2.Points
+}
+
+
+// TODO: write tests for this function
+func (s *Session) GetPlayersConn() (player1Conn, player2Conn *websocket.Conn) {
+	return s.player1.Connection, s.player2.Connection
 }
