@@ -4,9 +4,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
 	"github.com/ekefan/ddd-game-engine/internal/core/domain"
-	"github.com/gorilla/websocket"
+	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,31 +27,14 @@ func randomValidMove() domain.Move {
 	return possibleMoves[randIdx]
 }
 func createNewSession(t *testing.T) session.Session {
-	gs, err := session.NewSession(
-		session.WithPlayer1(&websocket.Conn{}, "testPlayer1"),
-		session.WithPlayer2(&websocket.Conn{}, "testPlayer2"),
-	)
-	require.NoError(t, err)
+	gs := session.NewSession(&domain.Player{}, &domain.Player{})
 	require.NotEmpty(t, gs)
 	assert.Equal(t, gs.GetRound(), session.InitRound)
-	return gs
+	return *gs
 }
 
 func TestNewSession(t *testing.T) {
 	createNewSession(t)
-
-	// test invalid session configurations
-	gs, err := session.NewSession()
-	assert.Error(t, err)
-	assert.Empty(t, gs)
-	assert.Equal(t, session.ErrPlayerMissing, err)
-
-	_, err = session.NewSession(session.WithPlayer2(&websocket.Conn{}, "testPlayer2"))
-	assert.Error(t, err)
-	assert.Equal(t, session.ErrPlayerMissing, err)
-	_, err = session.NewSession(session.WithPlayer1(&websocket.Conn{}, "testPlayer1"))
-	assert.Error(t, err)
-	assert.Equal(t, session.ErrPlayerMissing, err)
 }
 
 func TestGetID(t *testing.T) {
@@ -70,7 +52,7 @@ func TestUpdateRound(t *testing.T) {
 	initRound := gs.GetRound()
 	gs.UpdateRound()
 	updatedRound := gs.GetRound()
-	require.Equal(t, 1, updatedRound - initRound)
+	require.Equal(t, 1, updatedRound-initRound)
 }
 func TestSetRoundOutcome(t *testing.T) {
 	type testCase struct {
@@ -148,40 +130,39 @@ func TestSetPlayerName(t *testing.T) {
 	}
 }
 
-
 func TestSetPlayerMove(t *testing.T) {
 	type testCase struct {
-		name string
-		move domain.Move
-		flag int
+		name        string
+		move        domain.Move
+		flag        int
 		expectedErr error
 	}
 
 	testCases := []testCase{
 		{
-			name: "set valid move 1",
-			move: randomValidMove(),
-			flag: session.Player1Flag,
+			name:        "set valid move 1",
+			move:        randomValidMove(),
+			flag:        session.Player1Flag,
 			expectedErr: nil,
-		},{
-			name: "set lower invalid move",
-			move: -1,
-			flag: session.Player1Flag,
+		}, {
+			name:        "set lower invalid move",
+			move:        -1,
+			flag:        session.Player1Flag,
 			expectedErr: session.ErrInvalidMove,
-		},{
-			name: "set valid move 2",
-			move: randomValidMove(),
-			flag: session.Player2Flag,
+		}, {
+			name:        "set valid move 2",
+			move:        randomValidMove(),
+			flag:        session.Player2Flag,
 			expectedErr: nil,
-		},{
-			name: "set upper invalid move",
-			move: 3,
-			flag: session.Player2Flag,
+		}, {
+			name:        "set upper invalid move",
+			move:        3,
+			flag:        session.Player2Flag,
 			expectedErr: session.ErrInvalidMove,
 		},
 	}
-	for _, tc := range testCases{
-		t.Run(tc.name, func(t *testing.T){
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
 			gs := createNewSession(t)
 			err := gs.SetPlayerMove(tc.flag, tc.move)
 			assert.Equal(t, tc.expectedErr, err)

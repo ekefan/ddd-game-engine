@@ -37,54 +37,15 @@ type Session struct {
 	player2 *domain.Player
 }
 
-type sessionConfiguration func (s *Session) error
-func NewSession(cfgs ...sessionConfiguration) (Session, error) {
+func NewSession(player1, player2 *domain.Player) *Session {
 	match := &domain.Match{
 		ID:    uuid.New(),
 		Round: InitRound,
 	}
-	newSession := Session{
+	return &Session{
 		match:   match,
-	}
-	for _, cfg := range cfgs {
-		cfg(&newSession)
-	}
-	if newSession.player1 == nil || newSession.player2 == nil{
-		return Session{}, ErrPlayerMissing
-	}
-	return newSession, nil
-}
-
-
-func WithPlayer1(playerConn *websocket.Conn, name string) sessionConfiguration {
-	var playerName string
-	if name == "" {
-		playerName = DefaultPlayer1Name
-	}
-	player := domain.Player{
-		ID: uuid.New(),
-		Name: playerName,
-		Connection: playerConn,
-	}
-	return func(s *Session) error {
-		s.player1 = &player
-		return nil
-	}
-}
-
-func WithPlayer2(playerConn *websocket.Conn, name string) sessionConfiguration {
-	var playerName string
-	if name == "" {
-		playerName = DefaultPlayer2Name
-	}
-	player := domain.Player{
-		ID: uuid.New(),
-		Name: playerName,
-		Connection: playerConn,
-	}
-	return func(s *Session) error {
-		s.player2 = &player
-		return nil
+		player1: player1,
+		player2: player2,
 	}
 }
 
@@ -216,7 +177,6 @@ func (s *Session) IncreasePlayerPoint(flag int) error {
 func (s *Session) GetPlayersPoints() (player1Point, player2Point int16) {
 	return s.player1.Points, s.player2.Points
 }
-
 
 // TODO: write tests for this function
 func (s *Session) GetPlayersConn() (player1Conn, player2Conn *websocket.Conn) {
