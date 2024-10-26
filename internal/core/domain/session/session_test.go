@@ -5,36 +5,54 @@ import (
 	"testing"
 
 	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
-	"github.com/ekefan/ddd-game-engine/internal/core/rps"
+	"github.com/ekefan/ddd-game-engine/internal/core/domain"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // randomValidRoundOutcome generates a random valid round outcome
-func randomValidRoundOutcome() rps.RoundOutcome {
-	possibleOutcomes := [3]rps.RoundOutcome{rps.Draw, rps.Player1Win, rps.Player2Win}
+func randomValidRoundOutcome() domain.RoundOutcome {
+	possibleOutcomes := [3]domain.RoundOutcome{domain.Draw, domain.Player1Win, domain.Player2Win}
 	randIdx := rand.Intn(len(possibleOutcomes))
 	return possibleOutcomes[randIdx]
 }
 
-func randomValidMove() rps.Move {
-	possibleMoves := [3]rps.Move{
-		rps.Paper,
-		rps.Rock,
-		rps.Scissor,
+func randomValidMove() domain.Move {
+	possibleMoves := [3]domain.Move{
+		domain.Paper,
+		domain.Rock,
+		domain.Scissor,
 	}
 	randIdx := rand.Intn(len(possibleMoves))
 	return possibleMoves[randIdx]
 }
 func createNewSession(t *testing.T) session.Session {
-	gs, err := session.NewSession()
+	gs, err := session.NewSession(
+		session.WithPlayer1(&websocket.Conn{}, "testPlayer1"),
+		session.WithPlayer2(&websocket.Conn{}, "testPlayer2"),
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, gs)
+	assert.Equal(t, gs.GetRound(), session.InitRound)
 	return gs
 }
 
 func TestNewSession(t *testing.T) {
 	createNewSession(t)
+
+	// test invalid session configurations
+	gs, err := session.NewSession()
+	assert.Error(t, err)
+	assert.Empty(t, gs)
+	assert.Equal(t, session.ErrPlayerMissing, err)
+
+	_, err = session.NewSession(session.WithPlayer2(&websocket.Conn{}, "testPlayer2"))
+	assert.Error(t, err)
+	assert.Equal(t, session.ErrPlayerMissing, err)
+	_, err = session.NewSession(session.WithPlayer1(&websocket.Conn{}, "testPlayer1"))
+	assert.Error(t, err)
+	assert.Equal(t, session.ErrPlayerMissing, err)
 }
 
 func TestGetID(t *testing.T) {
@@ -57,7 +75,7 @@ func TestUpdateRound(t *testing.T) {
 func TestSetRoundOutcome(t *testing.T) {
 	type testCase struct {
 		name         string
-		roundOutcome rps.RoundOutcome
+		roundOutcome domain.RoundOutcome
 		expectedErr  error
 	}
 	testCases := []testCase{
@@ -134,7 +152,7 @@ func TestSetPlayerName(t *testing.T) {
 func TestSetPlayerMove(t *testing.T) {
 	type testCase struct {
 		name string
-		move rps.Move
+		move domain.Move
 		flag int
 		expectedErr error
 	}
