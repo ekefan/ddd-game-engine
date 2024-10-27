@@ -2,6 +2,8 @@ package session
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 
 	"github.com/ekefan/ddd-game-engine/internal/core/domain"
 	"github.com/google/uuid"
@@ -18,11 +20,10 @@ var (
 )
 
 const (
-	InitRound      = 1
-	MaxRound       = 3
-	Player1Flag    = 0
-	Player2Flag    = 1
-	MoveBufferSize = 2
+	InitRound   = 0
+	MaxRound    = 3
+	Player1Flag = 0
+	Player2Flag = 1
 )
 
 // Session represents a single instance of the game
@@ -31,10 +32,14 @@ const (
 //
 // An instance is created with it's factory NewSession()
 type Session struct {
-	match       *domain.Match
-	player1     *domain.Player
-	player2     *domain.Player
-	move        chan domain.PlayerMove
+	match        *domain.Match
+	player1      *domain.Player
+	player2      *domain.Player
+	player1move  chan domain.PlayerMove
+	player2move  chan domain.PlayerMove
+	response     *domain.Response
+	sessionEnded bool
+	mu           sync.Mutex
 }
 
 func NewSession(player1 *domain.Player) *Session {
@@ -45,7 +50,8 @@ func NewSession(player1 *domain.Player) *Session {
 	return &Session{
 		match:       match,
 		player1:     player1,
-		move: make(chan domain.PlayerMove, MoveBufferSize),
+		player1move: make(chan domain.PlayerMove),
+		player2move: make(chan domain.PlayerMove),
 	}
 }
 
@@ -73,91 +79,130 @@ func (s *Session) GetPlayer1() (player1 *domain.Player) {
 	return s.player1
 }
 
-func (s *Session) getPlayerPoint() (player1Point, player2Point int) {
-	return int(s.player1.Points), int(s.player2.Points)
-}
-func (s *Session) Ended() bool {
-	round := s.GetRound()
-	player1Point, player2Point := s.getPlayerPoint()
-	if round == MaxRound {
-		if player1Point != player2Point {
-			return true
-		}
-	}
-	if round > MaxRound {
-		if player1Point != player2Point {
-			return true
-		}
-	}
-	return false
+func (s *Session) GetResponse() *domain.Response {
+	s.generateResponse()
+	return s.response
 }
 
 // TODO: refactor
-func (s *Session) Write() {
+func (s *Session) Write(endSession chan bool) {
 	defer s.player1.Connection.Close()
 	defer s.player2.Connection.Close()
-	for {
-		move1 := <-s.move
-		move2 := <-s.move
-		if move1.Conn == s.player1.Connection{
-			s.player1.Move = move1.Move
+	defer close(endSession)
+	for !s.isSessionEnded() {
+		// receive moves from player connection
+		move1 := <-s.player1move
+		fmt.Printf(" player 1 move received from session:%v\n", s.GetID())
+		move2 := <-s.player2move
+		fmt.Printf(" player 2 move received from session:%v\n", s.GetID())
+		s.player1.Move = move1.Move
+		s.player2.Move = move2.Move
+
+		// determine RoundOutcome
+		s.DetermineRoundOutcome()
+		if s.sessionEnded {
+			fmt.Println("session ended first check", s.sessionEnded)
+			s.player1.Connection.WriteJSON(s.response)
+			s.player2.Connection.WriteJSON(s.response)
+			endSession <- true
+			s.player1.Connection.WriteJSON(s.GetWinResponse())
+			s.player2.Connection.WriteJSON(s.GetWinResponse())
+			return
 		}
-		if move2.Conn == s.player1.Connection {
-			s.player1.Move = move1.Move
-		}
-		if move1.Conn == s.player2.Connection{
-			s.player2.Move = move2.Move
-		}
-		if move2.Conn == s.player2.Connection {
-			s.player2.Move = move2.Move
-		}
-		s.player1.Connection.WriteMessage(websocket.TextMessage, []byte("move received"))
-		s.player2.Connection.WriteMessage(websocket.TextMessage, []byte("move received"))
+		s.player1.Connection.WriteJSON(s.response)
+		s.player2.Connection.WriteJSON(s.response)
+		fmt.Println("session ended second check", s.sessionEnded)
 	}
 }
 
-
-func (s *Session) Read() {
+func (s *Session) Read(endSession chan bool) {
 	defer s.player1.Connection.Close()
 	defer s.player2.Connection.Close()
+	defer close(endSession)
 	type WrongMoveResp struct {
-		msg string
+		Msg string `json:"msg"`
 	}
-	for {
-		_, msg, err := s.player1.Connection.ReadMessage()
-		if err != nil {
-			return
-		}
-		move1, err := parseMove(msg)
-		if err != nil {
-			resp := WrongMoveResp {
-				msg: "wrong move, Move must be rock paper or scissor",
+
+	for !s.isSessionEnded() {
+		player1Move := &domain.PlayerMove{}
+		player2Move := &domain.PlayerMove{}
+		validPlayer1Move := false
+		validPlayer2Move := false
+
+		// Attempt to read moves from both players
+		for !validPlayer1Move || !validPlayer2Move {
+			// Read Player 1's move
+			if !validPlayer1Move {
+				_, msg1, err := s.player1.Connection.ReadMessage()
+				if err != nil {
+					if websocket.IsCloseError(err) {
+						endSession <- true
+					}
+					return
+				}
+
+				move1, err := parseMove(msg1)
+				if err != nil {
+					resp := WrongMoveResp{Msg: "wrong move, Move must be rock, paper, or scissors"}
+					s.player1.Connection.WriteJSON(resp)
+					continue // Wait for a valid move
+				}
+
+				player1Move = &domain.PlayerMove{
+					Move: move1,
+					Conn: s.player1.Connection,
+				}
+				validPlayer1Move = true // Mark as valid once read successfully
 			}
-			s.player1.Connection.ReadJSON(resp)
+
+			// Read Player 2's move
+			if !validPlayer2Move {
+				_, msg2, err := s.player2.Connection.ReadMessage()
+				if err != nil {
+					if websocket.IsCloseError(err) {
+						endSession <- true
+					}
+					return
+				}
+
+				move2, err := parseMove(msg2)
+				if err != nil {
+					resp := WrongMoveResp{Msg: "wrong move, Move must be rock, paper, or scissors"}
+					s.player2.Connection.WriteJSON(resp)
+					continue // Wait for a valid move
+				}
+
+				player2Move = &domain.PlayerMove{
+					Move: move2,
+					Conn: s.player2.Connection,
+				}
+				validPlayer2Move = true // Mark as valid once read successfully
+			}
 		}
 
-		player1Move := domain.PlayerMove{
-			Move: move1,
-			Conn: s.player1.Connection,
-		}
-		_, msg, err = s.player2.Connection.ReadMessage()
-		if err != nil {
-			return
-		}
-		move2, err := parseMove(msg)
-		if err != nil {
-			resp := WrongMoveResp {
-				msg: "wrong move, Move must be rock paper or scissor",
-			}
-			s.player2.Connection.ReadJSON(resp)
-		}
-		player2Move := domain.PlayerMove{
-			Move: move2,
-			Conn: s.player2.Connection,
-		}
+		// Once both moves are valid, send them to the respective channels
+		s.player1move <- *player1Move
+		s.player2move <- *player2Move
+	}
+}
 
-		s.move <- player1Move
-		s.move <- player2Move
-		
+func (s *Session) DetermineRoundOutcome() {
+	s.setPlayerPoints()
+	if s.gameEnded() {
+		s.generateResponse()
+		return
+	}
+	s.generateResponse()
+}
+
+type WinResp struct {
+	WinMsg string `json:"message"`
+	Winner string `json:"winner"`
+}
+
+func (s *Session) GetWinResponse() *WinResp {
+	return &WinResp{
+		WinMsg: "session ended",
+		Winner: s.getSessionWinner(),
 	}
 }
