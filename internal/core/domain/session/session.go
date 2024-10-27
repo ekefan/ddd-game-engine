@@ -9,21 +9,20 @@ import (
 )
 
 var (
-	ErrInvalidPlayer       = errors.New("a player name must not be an empty string")
+	ErrInvalidPlayer       = errors.New("a player must have an active socket connection")
 	ErrInvalidMove         = errors.New("invalid move")
 	ErrInvalidRoundOutcome = errors.New("invalid round outcome")
 	ErrInvalidFlag         = errors.New("flag can either be 0 for Player1Flag and 1 for Player2Flag")
 	ErrNoSession           = errors.New("no game session has been created")
-	ErrPlayerMissing = errors.New("a session can start only with two players")
+	ErrPlayerMissing       = errors.New("a session can start only with two players")
 )
 
 const (
-	InitRound          = 1
-	MaxRound           = 3
-	DefaultPlayer1Name = "player1"
-	DefaultPlayer2Name = "player2"
-	Player1Flag        = 0
-	Player2Flag        = 1
+	InitRound      = 1
+	MaxRound       = 3
+	Player1Flag    = 0
+	Player2Flag    = 1
+	MoveBufferSize = 2
 )
 
 // Session represents a single instance of the game
@@ -32,20 +31,21 @@ const (
 //
 // An instance is created with it's factory NewSession()
 type Session struct {
-	match   *domain.Match
-	player1 *domain.Player
-	player2 *domain.Player
+	match       *domain.Match
+	player1     *domain.Player
+	player2     *domain.Player
+	move        chan domain.PlayerMove
 }
 
-func NewSession(player1, player2 *domain.Player) *Session {
+func NewSession(player1 *domain.Player) *Session {
 	match := &domain.Match{
 		ID:    uuid.New(),
 		Round: InitRound,
 	}
 	return &Session{
-		match:   match,
-		player1: player1,
-		player2: player2,
+		match:       match,
+		player1:     player1,
+		move: make(chan domain.PlayerMove, MoveBufferSize),
 	}
 }
 
@@ -57,128 +57,107 @@ func (s *Session) GetID() uuid.UUID {
 	return s.match.ID
 }
 
+// TODO: yet to test these
+func (s *Session) SetPlayer2(player *domain.Player) error {
+	if player.Connection == nil {
+		return ErrInvalidPlayer
+	}
+	s.player2 = player
+	return nil
+}
 func (s *Session) GetRound() int {
 	return s.match.Round
 }
 
-// UpdateRound update the current session's round
-func (s *Session) UpdateRound() {
-	s.match.Round++
+func (s *Session) GetPlayer1() (player1 *domain.Player) {
+	return s.player1
 }
 
-// DetermineRoundOutcome checks the players move returns RoundOutcome
-// on error RoundOutcome as -1, and associated error is return
-func (s *Session) DetermineRoundOutCome() (domain.RoundOutcome, error) {
-	if s.match == nil {
-		return -1, ErrNoSession
-	}
-	var roundOutcome domain.RoundOutcome
-	player1move, player2move := s.GetPlayersMoves()
-
-	winMoveMapping := map[domain.Move]domain.Move{
-		domain.Rock:    domain.Scissor,
-		domain.Paper:   domain.Rock,
-		domain.Scissor: domain.Paper,
-	}
-	if winMoveMapping[player1move] == player2move {
-		roundOutcome = domain.Player1Win
-	} else {
-		roundOutcome = domain.Player2Win
-	}
-	return roundOutcome, nil
+func (s *Session) getPlayerPoint() (player1Point, player2Point int) {
+	return int(s.player1.Points), int(s.player2.Points)
 }
-
-func (s *Session) SetRoundOutcome(roundOutcome domain.RoundOutcome) error {
-	if !roundOutcome.IsValid() {
-		return ErrInvalidRoundOutcome
-	}
-	s.match.RoundOutcome = roundOutcome
-	return nil
-}
-
-func (s *Session) SessionAtMaxRound() bool {
-	return s.GetRound() >= MaxRound
-}
-
-
-func (s *Session) GetRoundOutCome() domain.RoundOutcome {
-	return s.match.RoundOutcome 
-}
-
-// SetPlayerName sets players names for a game session
-//
-// name is the player name to be set
-//
-// the flag is either 0 for Player1Flag or  1 for Player2Flag
-func (s *Session) SetPlayerName(flag int, name string) error {
-	switch flag {
-	case 0:
-		if name == "" {
-			name = DefaultPlayer1Name
+func (s *Session) Ended() bool {
+	round := s.GetRound()
+	player1Point, player2Point := s.getPlayerPoint()
+	if round == MaxRound {
+		if player1Point != player2Point {
+			return true
 		}
-		s.player1.Name = name
-	case 1:
-		if name == "" {
-			name = DefaultPlayer2Name
+	}
+	if round > MaxRound {
+		if player1Point != player2Point {
+			return true
 		}
-		s.player2.Name = name
-	default:
-		return ErrInvalidFlag
 	}
-	return nil
+	return false
 }
 
-func (s *Session) GetPlayerName(flag int) (string, error) {
-	switch flag {
-	case Player1Flag:
-		return s.player1.Name, nil
-	case Player2Flag:
-		return s.player2.Name, nil
-	}
-
-	return "", ErrInvalidFlag
-}
-func (s *Session) SetPlayerMove(flag int, move domain.Move) error {
-	switch flag {
-	case Player1Flag:
-		if !move.IsValid() {
-			return ErrInvalidMove
+// TODO: refactor
+func (s *Session) Write() {
+	defer s.player1.Connection.Close()
+	defer s.player2.Connection.Close()
+	for {
+		move1 := <-s.move
+		move2 := <-s.move
+		if move1.Conn == s.player1.Connection{
+			s.player1.Move = move1.Move
 		}
-		s.player1.Move = move
-	case Player2Flag:
-		if !move.IsValid() {
-			return ErrInvalidMove
+		if move2.Conn == s.player1.Connection {
+			s.player1.Move = move1.Move
 		}
-		s.player2.Move = move
-	default:
-		return ErrInvalidFlag
+		if move1.Conn == s.player2.Connection{
+			s.player2.Move = move2.Move
+		}
+		if move2.Conn == s.player2.Connection {
+			s.player2.Move = move2.Move
+		}
+		s.player1.Connection.WriteMessage(websocket.TextMessage, []byte("move received"))
+		s.player2.Connection.WriteMessage(websocket.TextMessage, []byte("move received"))
 	}
-	return nil
 }
 
-// GEtMoves returns player1, and player2 moves
-func (s *Session) GetPlayersMoves() (player1Move, player2Move domain.Move) {
-	return s.player1.Move, s.player2.Move
-}
 
-func (s *Session) IncreasePlayerPoint(flag int) error {
-	switch flag {
-	case Player1Flag:
-		s.player1.Points++
-	case Player2Flag:
-		s.player2.Points++
-	default:
-		return ErrInvalidFlag
+func (s *Session) Read() {
+	defer s.player1.Connection.Close()
+	defer s.player2.Connection.Close()
+	type WrongMoveResp struct {
+		msg string
 	}
-	return nil
+	for {
+		_, msg, err := s.player1.Connection.ReadMessage()
+		if err != nil {
+			return
+		}
+		move1, err := parseMove(msg)
+		if err != nil {
+			resp := WrongMoveResp {
+				msg: "wrong move, Move must be rock paper or scissor",
+			}
+			s.player1.Connection.ReadJSON(resp)
+		}
 
-}
+		player1Move := domain.PlayerMove{
+			Move: move1,
+			Conn: s.player1.Connection,
+		}
+		_, msg, err = s.player2.Connection.ReadMessage()
+		if err != nil {
+			return
+		}
+		move2, err := parseMove(msg)
+		if err != nil {
+			resp := WrongMoveResp {
+				msg: "wrong move, Move must be rock paper or scissor",
+			}
+			s.player2.Connection.ReadJSON(resp)
+		}
+		player2Move := domain.PlayerMove{
+			Move: move2,
+			Conn: s.player2.Connection,
+		}
 
-func (s *Session) GetPlayersPoints() (player1Point, player2Point int16) {
-	return s.player1.Points, s.player2.Points
-}
-
-// TODO: write tests for this function
-func (s *Session) GetPlayersConn() (player1Conn, player2Conn *websocket.Conn) {
-	return s.player1.Connection, s.player2.Connection
+		s.move <- player1Move
+		s.move <- player2Move
+		
+	}
 }
