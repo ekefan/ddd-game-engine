@@ -90,5 +90,4 @@ func (ws *WebServer) PlayGame(w http.ResponseWriter, r *http.Request) {
 		Connection: socket,
 	}
 	go ws.gs.PlayGame(sessionID, player2)
-	socket.WriteMessage(websocket.TextMessage, []byte("game started"))
 }
