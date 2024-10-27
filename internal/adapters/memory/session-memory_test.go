@@ -12,7 +12,7 @@ import (
 )
 
 func newSession(t *testing.T) session.Session {
-	ns := session.NewSession(&domain.Player{}, &domain.Player{})
+	ns := session.NewSession(&domain.Player{})
 
 	require.NotEmpty(t, ns)
 	return *ns
@@ -28,7 +28,7 @@ func TestGet(t *testing.T) {
 	ns := newSession(t)
 	id := ns.GetID()
 	repo := NewSessionRepository()
-	repo.sessions[id] = ns
+	repo.CreateSession(&ns)
 	testCases := []testCase{
 		{
 			test:        "session exists",
@@ -43,7 +43,7 @@ func TestGet(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.test, func(t *testing.T) {
-			_, err := repo.Get(tc.id)
+			_, err := repo.GetSession(tc.id)
 			assert.Equal(t, tc.expectedErr, err)
 		})
 	}
@@ -56,13 +56,13 @@ func TestAdd(t *testing.T) {
 		expectedErr error
 	}
 	ns := newSession(t)
-	sessions := NewSessionRepository()
-	sessions.sessions[ns.GetID()] = ns
+	repo := NewSessionRepository()
+	repo.CreateSession(&ns)
 	testCases := []testCase{
 		{
 			test:        "session already exists",
 			sess:        ns,
-			expectedErr: session_repo.ErrFailedToAddSession,
+			expectedErr: session_repo.ErrFailedToCreateSession,
 		}, {
 			test:        "session doesn't exist",
 			sess:        newSession(t),
@@ -71,7 +71,7 @@ func TestAdd(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.test, func(t *testing.T) {
-			err := sessions.Add(tc.sess)
+			err := repo.CreateSession(&tc.sess)
 			assert.Equal(t, tc.expectedErr, err)
 		})
 	}
@@ -83,8 +83,8 @@ func TestUpdate(t *testing.T) {
 		expectedErr error
 	}
 	ns := newSession(t)
-	sessions := NewSessionRepository()
-	sessions.sessions[ns.GetID()] = ns
+	repo := NewSessionRepository()
+	repo.CreateSession(&ns)
 	testCases := []testCase{
 		{
 			test:        "session doesn't exist",
@@ -99,7 +99,7 @@ func TestUpdate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.test, func(t *testing.T) {
-			err := sessions.Update(tc.sess)
+			err := repo.UpdateSession(&tc.sess)
 			assert.Equal(t, tc.expectedErr, err)
 		})
 	}
@@ -114,7 +114,7 @@ func TestDelete(t *testing.T) {
 	ns := newSession(t)
 	id := ns.GetID()
 	repo := NewSessionRepository()
-	repo.sessions[id] = ns
+	repo.CreateSession(&ns)
 	testCases := []testCase{
 		{
 			test:        "session exists",
@@ -129,7 +129,7 @@ func TestDelete(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.test, func(t *testing.T) {
-			err := repo.Delete(tc.id)
+			err := repo.DeleteSession(tc.id)
 			assert.Equal(t, tc.expectedErr, err)
 		})
 	}

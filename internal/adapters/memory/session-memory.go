@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
+	"github.com/ekefan/ddd-game-engine/internal/ports/repository"
 	session_repo "github.com/ekefan/ddd-game-engine/internal/ports/repository"
 	"github.com/google/uuid"
 )
@@ -13,35 +14,35 @@ type MemoryRepository struct {
 	sync.Mutex
 }
 
-func NewSessionRepository() *MemoryRepository {
+func NewSessionRepository() repository.SessionRepository {
 	return &MemoryRepository{
 		sessions: make(map[uuid.UUID]session.Session),
 	}
 }
 
-func (mr *MemoryRepository) Get(id uuid.UUID) (session.Session, error) {
+func (mr *MemoryRepository) GetSession(id uuid.UUID) (*session.Session, error) {
 	if session, ok := mr.sessions[id]; ok {
-		return session, nil
+		return &session, nil
 	}
-	return session.Session{}, session_repo.ErrSessionNotFound
+	return &session.Session{}, session_repo.ErrSessionNotFound
 }
 
-func (mr *MemoryRepository) Add(s session.Session) error {
+func (mr *MemoryRepository) CreateSession(s *session.Session) error {
 	if mr.sessions == nil {
 		mr.Lock()
 		mr.sessions = make(map[uuid.UUID]session.Session)
 		mr.Unlock()
 	}
 	if _, ok := mr.sessions[s.GetID()]; ok {
-		return session_repo.ErrFailedToAddSession
+		return session_repo.ErrFailedToCreateSession
 	}
 	mr.Lock()
 	defer mr.Unlock()
-	mr.sessions[s.GetID()] = s
+	mr.sessions[s.GetID()] = *s
 	return nil
 }
 
-func (mr *MemoryRepository) Update(sess session.Session) error {
+func (mr *MemoryRepository) UpdateSession(sess *session.Session) error {
 	id := sess.GetID()
 	_, ok := mr.sessions[id]
 	if !ok {
@@ -49,11 +50,11 @@ func (mr *MemoryRepository) Update(sess session.Session) error {
 	}
 	mr.Lock()
 	defer mr.Unlock()
-	mr.sessions[id] = sess
+	mr.sessions[id] = *sess
 	return nil
 }
 
-func (mr *MemoryRepository) Delete(id uuid.UUID) error {
+func (mr *MemoryRepository) DeleteSession(id uuid.UUID) error {
 	if _, ok := mr.sessions[id]; !ok {
 		return session_repo.ErrFailedToDeleteSession
 	}
