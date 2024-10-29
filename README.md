@@ -3,7 +3,7 @@
 ###### _project is not complete_
 The project features a domain driven game engine for a rock paper and scissor game, serving two applications a http server and a cli server at the same time
 
-Currently only the http server is available and can be spinned of on your local machine by runing this command:
+Currently only the http server is available and can be spinned of on your local machine by runing this command when you clone this repository to your machine:
 
 ```bash
 go run cmd/web/main.go
