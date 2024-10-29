@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -85,10 +86,7 @@ func (s *Session) GetResponse() *domain.Response {
 }
 
 // TODO: refactor
-func (s *Session) Write(endSession chan bool) {
-	defer s.player1.Connection.Close()
-	defer s.player2.Connection.Close()
-	defer close(endSession)
+func (s *Session) Write(endSession context.CancelFunc) {
 	for !s.isSessionEnded() {
 		// receive moves from player connection
 		move1 := <-s.player1move
@@ -104,21 +102,24 @@ func (s *Session) Write(endSession chan bool) {
 			fmt.Println("session ended first check", s.sessionEnded)
 			s.player1.Connection.WriteJSON(s.response)
 			s.player2.Connection.WriteJSON(s.response)
-			endSession <- true
+
+			fmt.Println("game ended")
 			s.player1.Connection.WriteJSON(s.GetWinResponse())
 			s.player2.Connection.WriteJSON(s.GetWinResponse())
+			fmt.Println("last connection sent")
+
+			endSession()
 			return
 		}
 		s.player1.Connection.WriteJSON(s.response)
 		s.player2.Connection.WriteJSON(s.response)
 		fmt.Println("session ended second check", s.sessionEnded)
 	}
+	s.player1.Connection.Close()
+	s.player2.Connection.Close()
 }
 
-func (s *Session) Read(endSession chan bool) {
-	defer s.player1.Connection.Close()
-	defer s.player2.Connection.Close()
-	defer close(endSession)
+func (s *Session) Read(endSession context.CancelFunc) {
 	type WrongMoveResp struct {
 		Msg string `json:"msg"`
 	}
@@ -136,8 +137,9 @@ func (s *Session) Read(endSession chan bool) {
 				_, msg1, err := s.player1.Connection.ReadMessage()
 				if err != nil {
 					if websocket.IsCloseError(err) {
-						endSession <- true
+						fmt.Printf("session with id: %v has a disconnected player", s.GetID())
 					}
+					endSession()
 					return
 				}
 
@@ -160,8 +162,10 @@ func (s *Session) Read(endSession chan bool) {
 				_, msg2, err := s.player2.Connection.ReadMessage()
 				if err != nil {
 					if websocket.IsCloseError(err) {
-						endSession <- true
+						fmt.Printf("session with id: %v should be closed", s.GetID())
+						return
 					}
+					endSession()
 					return
 				}
 
@@ -171,6 +175,7 @@ func (s *Session) Read(endSession chan bool) {
 					s.player2.Connection.WriteJSON(resp)
 					continue // Wait for a valid move
 				}
+
 
 				player2Move = &domain.PlayerMove{
 					Move: move2,
@@ -206,3 +211,6 @@ func (s *Session) GetWinResponse() *WinResp {
 		Winner: s.getSessionWinner(),
 	}
 }
+
+
+// use session with context wait for the cancel signal from the context then delete the session
