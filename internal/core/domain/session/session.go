@@ -104,8 +104,8 @@ func (s *Session) Write(endSession context.CancelFunc) {
 			s.player2.Connection.WriteJSON(s.response)
 
 			fmt.Println("game ended")
-			s.player1.Connection.WriteJSON(s.GetWinResponse())
-			s.player2.Connection.WriteJSON(s.GetWinResponse())
+			s.player1.Connection.WriteJSON(s.getWinResponse())
+			s.player2.Connection.WriteJSON(s.getWinResponse())
 			fmt.Println("last connection sent")
 
 			endSession()
@@ -205,7 +205,7 @@ type WinResp struct {
 	Winner string `json:"winner"`
 }
 
-func (s *Session) GetWinResponse() *WinResp {
+func (s *Session) getWinResponse() *WinResp {
 	return &WinResp{
 		WinMsg: "session ended",
 		Winner: s.getSessionWinner(),
