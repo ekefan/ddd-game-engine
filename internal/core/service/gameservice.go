@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -42,6 +43,8 @@ func (gs *GameService) GetSession(id uuid.UUID) (*session.Session, error) {
 	return gs.sessRepo.GetSession(id)
 }
 
+
+// TODO: refactor code
 func (gs *GameService) PlayGame(id uuid.UUID, player2 *domain.Player) error {
 	sess, err := gs.GetSession(id)
 	if err != nil {
@@ -66,10 +69,16 @@ func (gs *GameService) PlayGame(id uuid.UUID, player2 *domain.Player) error {
 
 	// TODO: handle session contexts
 	fmt.Println("game started")
-	endSession := make(chan bool)
+	ctx, endSession := context.WithCancel(context.Background())
+
+	// wait for sessiion 
+	go func() {
+		<- ctx.Done()
+		player1.Connection.Close()
+		player2.Connection.Close()
+		gs.sessRepo.DeleteSession(id)
+	}()
 	go sess.Write(endSession)
 	sess.Read(endSession)
-	<-endSession
-
 	return nil
 }
