@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrInvalidPlayer       = errors.New("a player must have an active socket connection")
+	ErrInvalidPlayer       = errors.New("a player must have an active socket connection and a valid ID")
 	ErrInvalidMove         = errors.New("invalid move")
 	ErrInvalidRoundOutcome = errors.New("invalid round outcome")
 	ErrInvalidFlag         = errors.New("flag can either be 0 for Player1Flag and 1 for Player2Flag")
@@ -36,8 +36,8 @@ type Session struct {
 	match        *domain.Match
 	player1      *domain.Player
 	player2      *domain.Player
-	player1move  chan domain.PlayerMove
-	player2move  chan domain.PlayerMove
+	player1move  chan domain.Move
+	player2move  chan domain.Move
 	response     *domain.Response
 	sessionEnded bool
 	mu           sync.Mutex
@@ -51,8 +51,8 @@ func NewSession(player1 *domain.Player) *Session {
 	return &Session{
 		match:       match,
 		player1:     player1,
-		player1move: make(chan domain.PlayerMove),
-		player2move: make(chan domain.PlayerMove),
+		player1move: make(chan domain.Move),
+		player2move: make(chan domain.Move),
 	}
 }
 
@@ -66,7 +66,7 @@ func (s *Session) GetID() uuid.UUID {
 
 // TODO: yet to test these
 func (s *Session) SetPlayer2(player *domain.Player) error {
-	if player.Connection == nil {
+	if player.Connection == nil || player.ID == uuid.Nil {
 		return ErrInvalidPlayer
 	}
 	s.player2 = player
@@ -80,65 +80,83 @@ func (s *Session) GetPlayer1() (player1 *domain.Player) {
 	return s.player1
 }
 
+func (s *Session) GetPlayer2() (player2 *domain.Player) {
+	return s.player2
+}
+
 func (s *Session) GetResponse() *domain.Response {
-	s.generateResponse()
+	s.generateRoundResponse()
 	return s.response
 }
 
+func (s *Session) SendWinMessage() {
+	fmt.Println("game ended")
+	err := s.player1.Connection.WriteJSON(s.getWinResponse())
+	if err != nil {
+		fmt.Println(err, "from sending player1 win message")
+	}
+	err = s.player2.Connection.WriteJSON(s.getWinResponse())
+	if err != nil {
+		fmt.Println(err, "from sending player2 win message")
+	}
+}
+
 // TODO: refactor
-func (s *Session) Write(endSession context.CancelFunc) {
+func (s *Session) WriteRoundOutcome(endSession context.CancelFunc) {
+	defer close(s.player1move)
+	defer close(s.player2move)
+	defer endSession()
 	for !s.isSessionEnded() {
 		// receive moves from player connection
 		move1 := <-s.player1move
-		fmt.Printf(" player 1 move received from session:%v\n", s.GetID())
 		move2 := <-s.player2move
-		fmt.Printf(" player 2 move received from session:%v\n", s.GetID())
-		s.player1.Move = move1.Move
-		s.player2.Move = move2.Move
+
+		s.player1.Move = move1
+		s.player2.Move = move2
 
 		// determine RoundOutcome
-		s.DetermineRoundOutcome()
-		if s.sessionEnded {
-			fmt.Println("session ended first check", s.sessionEnded)
-			s.player1.Connection.WriteJSON(s.response)
-			s.player2.Connection.WriteJSON(s.response)
+		s.determineRoundOutcome()
 
-			fmt.Println("game ended")
-			s.player1.Connection.WriteJSON(s.getWinResponse())
-			s.player2.Connection.WriteJSON(s.getWinResponse())
-			fmt.Println("last connection sent")
-
-			endSession()
+		// send round outcome to players
+		err := s.player1.Connection.WriteJSON(s.response)
+		if err != nil {
 			return
 		}
-		s.player1.Connection.WriteJSON(s.response)
-		s.player2.Connection.WriteJSON(s.response)
-		fmt.Println("session ended second check", s.sessionEnded)
+		err = s.player2.Connection.WriteJSON(s.response)
+		if err != nil {
+			return
+		}
+
+		if s.sessionEnded {
+			return
+		}
 	}
-	s.player1.Connection.Close()
-	s.player2.Connection.Close()
 }
 
-func (s *Session) Read(endSession context.CancelFunc) {
+// ReadPlayerMoves reads from player connections to get player moves
+//
+// for tests
+// receive domain.PlayerMove through session channels
+// receive message from player channel one when two is disconnected and vice versa
+// recevive message from player one when wrong move is sent on the channel perform for channel two too
+func (s *Session) ReadPlayerMoves(endSession context.CancelFunc) {
 	type WrongMoveResp struct {
 		Msg string `json:"msg"`
 	}
-
-	for !s.isSessionEnded() {
-		player1Move := &domain.PlayerMove{}
-		player2Move := &domain.PlayerMove{}
+	for {
+		var player1Move domain.Move
+		var player2Move domain.Move
 		validPlayer1Move := false
 		validPlayer2Move := false
 
 		// Attempt to read moves from both players
-		for !validPlayer1Move || !validPlayer2Move {
+		for (!validPlayer1Move || !validPlayer2Move) && !s.sessionEnded {
 			// Read Player 1's move
 			if !validPlayer1Move {
 				_, msg1, err := s.player1.Connection.ReadMessage()
 				if err != nil {
-					if websocket.IsCloseError(err) {
-						fmt.Printf("session with id: %v has a disconnected player", s.GetID())
-					}
+					// TODO: there should be a way to send the reason for ending the session
+					s.player2.Connection.WriteMessage(websocket.TextMessage, []byte("player1 disconnected"))
 					endSession()
 					return
 				}
@@ -150,10 +168,7 @@ func (s *Session) Read(endSession context.CancelFunc) {
 					continue // Wait for a valid move
 				}
 
-				player1Move = &domain.PlayerMove{
-					Move: move1,
-					Conn: s.player1.Connection,
-				}
+				player1Move = move1
 				validPlayer1Move = true // Mark as valid once read successfully
 			}
 
@@ -161,10 +176,7 @@ func (s *Session) Read(endSession context.CancelFunc) {
 			if !validPlayer2Move {
 				_, msg2, err := s.player2.Connection.ReadMessage()
 				if err != nil {
-					if websocket.IsCloseError(err) {
-						fmt.Printf("session with id: %v should be closed", s.GetID())
-						return
-					}
+					s.player1.Connection.WriteMessage(websocket.TextMessage, []byte("player1 disconnected"))
 					endSession()
 					return
 				}
@@ -176,28 +188,25 @@ func (s *Session) Read(endSession context.CancelFunc) {
 					continue // Wait for a valid move
 				}
 
-
-				player2Move = &domain.PlayerMove{
-					Move: move2,
-					Conn: s.player2.Connection,
-				}
+				player2Move = move2
 				validPlayer2Move = true // Mark as valid once read successfully
 			}
 		}
-
 		// Once both moves are valid, send them to the respective channels
-		s.player1move <- *player1Move
-		s.player2move <- *player2Move
+		if !s.sessionEnded {
+			s.player1move <- player1Move
+			s.player2move <- player2Move
+		}
+
 	}
 }
 
-func (s *Session) DetermineRoundOutcome() {
+func (s *Session) determineRoundOutcome() {
+	s.setRoundOutcome()
 	s.setPlayerPoints()
-	if s.gameEnded() {
-		s.generateResponse()
-		return
-	}
-	s.generateResponse()
+	s.updateRound()
+	s.generateRoundResponse()
+	s.checkGameEnded()
 }
 
 type WinResp struct {
@@ -211,6 +220,5 @@ func (s *Session) getWinResponse() *WinResp {
 		Winner: s.getSessionWinner(),
 	}
 }
-
 
 // use session with context wait for the cancel signal from the context then delete the session
