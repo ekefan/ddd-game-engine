@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync"
 
 	"github.com/ekefan/ddd-game-engine/internal/core/domain"
 	"github.com/ekefan/ddd-game-engine/internal/core/domain/session"
@@ -19,8 +17,7 @@ var (
 
 type GameService struct {
 	sessRepo   repo.SessionRepository
-	endSession chan bool
-	sync.Mutex
+
 }
 
 func NewGameService(sessionRepo repo.SessionRepository) *GameService {
@@ -46,12 +43,16 @@ func (gs *GameService) GetSession(id uuid.UUID) (*session.Session, error) {
 
 // TODO: refactor code
 func (gs *GameService) PlayGame(id uuid.UUID, player2 *domain.Player) error {
+
+	// gets the session id for the game to be played
 	sess, err := gs.GetSession(id)
 	if err != nil {
 		player2.Connection.WriteMessage(websocket.TextMessage, []byte("session invalid, player must create a session"))
 		player2.Connection.Close()
 		return err
 	}
+
+	// get player one for the game to be played
 	player1 := sess.GetPlayer1()
 	if player1 == nil {
 		gs.sessRepo.DeleteSession(id)
@@ -60,25 +61,28 @@ func (gs *GameService) PlayGame(id uuid.UUID, player2 *domain.Player) error {
 		return errors.New("to play a game there must be two players")
 	}
 
+	// set player two for the game to be played
 	if err := sess.SetPlayer2(player2); err != nil {
 		gs.sessRepo.DeleteSession(id)
 		return err
 	}
+
+	// send game started message to both players for the game to be played
 	player1.Connection.WriteMessage(websocket.TextMessage, []byte("game started"))
 	player2.Connection.WriteMessage(websocket.TextMessage, []byte("game started"))
 
 	// TODO: handle session contexts
-	fmt.Println("game started")
 	ctx, endSession := context.WithCancel(context.Background())
 
-	// wait for sessiion 
-	go func() {
-		<- ctx.Done()
-		player1.Connection.Close()
-		player2.Connection.Close()
-		gs.sessRepo.DeleteSession(id)
-	}()
-	go sess.Write(endSession)
-	sess.Read(endSession)
+	// start game on a different go routine
+	go func(c context.Context, s *session.Session) {
+		<- c.Done()
+		s.SendWinMessage()
+		s.GetPlayer1().Connection.Close()
+		s.GetPlayer2().Connection.Close()
+		gs.sessRepo.DeleteSession(s.GetID())
+	}(ctx, sess)
+	go sess.WriteRoundOutcome(endSession)
+	sess.ReadPlayerMoves(endSession)
 	return nil
 }
