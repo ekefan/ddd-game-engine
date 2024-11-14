@@ -1,6 +1,5 @@
 package domain
 
-import "github.com/gorilla/websocket"
 
 // Move is a value-object that represents a move a player can make
 //
@@ -26,9 +25,4 @@ func (m Move) String() string {
 // IsValid checks if a move is valid, i.e one of Rock, Paper, Scissors
 func (m Move) IsValid() bool {
 	return m == Rock || m == Paper || m == Scissor
-}
-
-type PlayerMove struct {
-	Move Move
-	Conn *websocket.Conn
 }
