@@ -20,36 +20,49 @@ func parseMove(msg []byte) (domain.Move, error) {
 	}
 }
 
-func (s *Session) gameEnded() bool {
+
+// checks if game is ended
+func (s *Session) checkGameEnded(){
     if s.match.Round >= MaxRound && s.player1.Points != s.player2.Points {
 		s.sessionEnded = true
-        return true
     }
-    return false
 }
 
 
-func (s *Session) setPlayerPoints() {
+func (s *Session) setRoundOutcome() {
 	if s.player1.Move == s.player2.Move {
 		s.match.RoundOutcome = domain.Draw
 		return
 	}
-	s.updateRound()
 	moveMap := map[domain.Move]domain.Move{
 		domain.Rock:    domain.Scissor,
 		domain.Paper:   domain.Rock,
 		domain.Scissor: domain.Paper,
 	}
 	if moveMap[s.player1.Move] == s.player2.Move {
-		s.player1.Points++
 		s.match.RoundOutcome = domain.Player1Win
 	} else {
-		s.player2.Points++
 		s.match.RoundOutcome = domain.Player2Win
 	}
 }
 
-func (s *Session) generateResponse() {
+func (s *Session) setPlayerPoints() {
+	if s.match.RoundOutcome == domain.Draw {
+		return
+	}
+	if s.match.RoundOutcome == domain.Player1Win {
+		s.player1.Points++
+	}
+	if s.match.RoundOutcome == domain.Player2Win {
+		s.player2.Points++
+	}
+}
+
+func (s *Session) updateRound() {
+	s.match.Round++
+}
+
+func (s *Session) generateRoundResponse() {
 	s.response = &domain.Response{
 		Round:  s.match.Round,
 		Winner: s.getRoundWinner(),
@@ -73,11 +86,6 @@ func (s *Session) getRoundWinner() string {
         return s.player2.Name
     }
 }
-
-func (s *Session) updateRound() {
-	s.match.Round++
-}
-
 
 func (s *Session) isSessionEnded() bool{
 	s.mu.Lock()
