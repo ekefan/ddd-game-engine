@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -57,6 +58,7 @@ func (ws *WebServer) CreateSession(w http.ResponseWriter, r *http.Request) {
 		SessionID: sess.GetID(),
 	}
 	socket.WriteJSON(resp)
+	// TODO: set time out to close connection when another player hasn't joined in a while
 }
 
 func (ws *WebServer) PlayGame(w http.ResponseWriter, r *http.Request) {
@@ -66,14 +68,13 @@ func (ws *WebServer) PlayGame(w http.ResponseWriter, r *http.Request) {
 		slog.Error("can't start game session", "reason", err)
 		return
 	}
-
+	defer socket.Close()
 	// validate client request
 	urlValues, ok := r.URL.Query()["session_id"]
 	if !ok {
 		slog.Error("can't play game", "reason", "invalid request parameters")
-		socket.WriteMessage(websocket.TextMessage, 
+		socket.WriteMessage(websocket.TextMessage,
 			[]byte("Invalid request parameters, should be localhost/game/play?session_id=<session_id you copied"))
-		socket.Close()
 		return
 	}
 	// get session id from request
@@ -89,5 +90,8 @@ func (ws *WebServer) PlayGame(w http.ResponseWriter, r *http.Request) {
 		Name:       domain.DefaultPlayer2Name,
 		Connection: socket,
 	}
-	go ws.gs.PlayGame(sessionID, player2)
+	err = ws.gs.PlayGame(sessionID, player2)
+	if err != nil {
+		fmt.Println("error playing game:", err)
+	}
 }
